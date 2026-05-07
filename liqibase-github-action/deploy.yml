@@ -14,20 +14,15 @@ on:
           - preprod
           - prod
 
-# Prevent concurrent runs against the same environment
 concurrency:
   group: liquibase-${{ github.event.inputs.environment }}
-  cancel-in-progress: false  # queue rather than cancel — safer for DB migrations
+  cancel-in-progress: false
 
 jobs:
 
-  # ============================================================
-  # JOB 1 — Read config.yaml and output env-specific values
-  # ============================================================
   load-config:
     name: Load config for ${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
-
     outputs:
       snowflake_account:   ${{ steps.parse.outputs.snowflake_account }}
       snowflake_db:        ${{ steps.parse.outputs.snowflake_db }}
@@ -37,8 +32,7 @@ jobs:
       liquibase_contexts:  ${{ steps.parse.outputs.liquibase_contexts }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Install yq
         run: |
@@ -46,36 +40,27 @@ jobs:
             https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
 
-      - name: Parse config.yaml for environment
+      - name: Parse config.yaml
         id: parse
         run: |
           ENV="${{ github.event.inputs.environment }}"
-
-          # Validate environment exists in config
           if ! yq ".environments | has(\"${ENV}\")" config/config.yaml | grep -q "true"; then
             echo "❌ Environment '${ENV}' not found in config/config.yaml"
             exit 1
           fi
-
-          # Dynamically export every key under the chosen environment
           while IFS='=' read -r key value; do
             echo "${key}=${value}" >> $GITHUB_OUTPUT
           done < <(yq ".environments.${ENV} | to_entries | .[] | .key + \"=\" + .value" config/config.yaml)
+          echo "✅ Config loaded for: ${ENV}"
 
-          echo "✅ Config loaded for environment: ${ENV}"
-
-  # ============================================================
-  # JOB 2 — Run Liquibase migration
-  # ============================================================
   migrate:
     name: Migrate ${{ github.event.inputs.environment }}
     needs: load-config
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment }}  # pulls secrets per env
+    environment: ${{ github.event.inputs.environment }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -94,34 +79,58 @@ jobs:
           mkdir -p liquibase/lib
           curl -sL https://repo1.maven.org/maven2/net/snowflake/snowflake-jdbc/3.15.0/snowflake-jdbc-3.15.0.jar \
             -o liquibase/lib/snowflake-jdbc.jar
-          echo "✅ Snowflake JDBC driver downloaded"
 
-      - name: Validate changelog (dry run)
+      - name: Convert P8 key to base64 DER for JDBC
         env:
-          SNOWFLAKE_USER:     ${{ secrets.SNOWFLAKE_USER }}
-          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+          SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+          # Only needed if your P8 key has a passphrase:
+          SNOWFLAKE_PRIVATE_KEY_PASSPHRASE: ${{ secrets.SNOWFLAKE_PRIVATE_KEY_PASSPHRASE }}
+        run: |
+          # Write PEM to temp file
+          echo "${SNOWFLAKE_PRIVATE_KEY}" > /tmp/snowflake_key.p8
+
+          # Convert PEM → DER → base64 (what Snowflake JDBC expects)
+          if [ -n "${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}" ]; then
+            # Encrypted key — decrypt first
+            openssl pkcs8 -in /tmp/snowflake_key.p8 \
+              -passin env:SNOWFLAKE_PRIVATE_KEY_PASSPHRASE \
+              -nocrypt -out /tmp/snowflake_key_plain.p8
+            openssl pkcs8 -in /tmp/snowflake_key_plain.p8 \
+              -nocrypt -topk8 -outform DER \
+              | base64 -w 0 > /tmp/snowflake_key.b64
+            rm -f /tmp/snowflake_key_plain.p8
+          else
+            # Unencrypted key
+            openssl pkcs8 -in /tmp/snowflake_key.p8 \
+              -nocrypt -topk8 -outform DER \
+              | base64 -w 0 > /tmp/snowflake_key.b64
+          fi
+
+          # Export to env for next steps — never printed to logs
+          echo "SNOWFLAKE_PRIVATE_KEY_BASE64=$(cat /tmp/snowflake_key.b64)" >> $GITHUB_ENV
+
+          # Clean up temp files
+          rm -f /tmp/snowflake_key.p8 /tmp/snowflake_key.b64
+          echo "✅ Key converted"
+
+      - name: Validate changelog
         run: |
           liquibase \
             --driver=net.snowflake.client.jdbc.SnowflakeDriver \
             --classpath=liquibase/lib/snowflake-jdbc.jar \
-            --url="jdbc:snowflake://${{ needs.load-config.outputs.snowflake_account }}.snowflakecomputing.com/?db=${{ needs.load-config.outputs.snowflake_db }}&schema=${{ needs.load-config.outputs.snowflake_schema }}&warehouse=${{ needs.load-config.outputs.snowflake_warehouse }}&role=${{ needs.load-config.outputs.snowflake_role }}" \
-            --username="${SNOWFLAKE_USER}" \
-            --password="${SNOWFLAKE_PASSWORD}" \
+            --url="jdbc:snowflake://${{ needs.load-config.outputs.snowflake_account }}.snowflakecomputing.com/?db=${{ needs.load-config.outputs.snowflake_db }}&schema=${{ needs.load-config.outputs.snowflake_schema }}&warehouse=${{ needs.load-config.outputs.snowflake_warehouse }}&role=${{ needs.load-config.outputs.snowflake_role }}&authenticator=snowflake_jwt&privateKey=${SNOWFLAKE_PRIVATE_KEY_BASE64}" \
+            --username="${{ vars.SNOWFLAKE_USER }}" \
             --changeLogFile=config/db.changelog-master.xml \
             --contexts="${{ needs.load-config.outputs.liquibase_contexts }}" \
             validate
 
       - name: Run Liquibase update
-        env:
-          SNOWFLAKE_USER:     ${{ secrets.SNOWFLAKE_USER }}
-          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
         run: |
           liquibase \
             --driver=net.snowflake.client.jdbc.SnowflakeDriver \
             --classpath=liquibase/lib/snowflake-jdbc.jar \
-            --url="jdbc:snowflake://${{ needs.load-config.outputs.snowflake_account }}.snowflakecomputing.com/?db=${{ needs.load-config.outputs.snowflake_db }}&schema=${{ needs.load-config.outputs.snowflake_schema }}&warehouse=${{ needs.load-config.outputs.snowflake_warehouse }}&role=${{ needs.load-config.outputs.snowflake_role }}" \
-            --username="${SNOWFLAKE_USER}" \
-            --password="${SNOWFLAKE_PASSWORD}" \
+            --url="jdbc:snowflake://${{ needs.load-config.outputs.snowflake_account }}.snowflakecomputing.com/?db=${{ needs.load-config.outputs.snowflake_db }}&schema=${{ needs.load-config.outputs.snowflake_schema }}&warehouse=${{ needs.load-config.outputs.snowflake_warehouse }}&role=${{ needs.load-config.outputs.snowflake_role }}&authenticator=snowflake_jwt&privateKey=${SNOWFLAKE_PRIVATE_KEY_BASE64}" \
+            --username="${{ vars.SNOWFLAKE_USER }}" \
             --changeLogFile=config/db.changelog-master.xml \
             --contexts="${{ needs.load-config.outputs.liquibase_contexts }}" \
             --log-level=INFO \
@@ -130,30 +139,36 @@ jobs:
       - name: Post-migration summary
         if: success()
         env:
-          SNOWFLAKE_ACCOUNT:  ${{ needs.load-config.outputs.snowflake_account }}
-          SNOWFLAKE_DB:       ${{ needs.load-config.outputs.snowflake_db }}
-          SNOWFLAKE_SCHEMA:   ${{ needs.load-config.outputs.snowflake_schema }}
+          SNOWFLAKE_ACCOUNT:   ${{ needs.load-config.outputs.snowflake_account }}
+          SNOWFLAKE_DB:        ${{ needs.load-config.outputs.snowflake_db }}
+          SNOWFLAKE_SCHEMA:    ${{ needs.load-config.outputs.snowflake_schema }}
           SNOWFLAKE_WAREHOUSE: ${{ needs.load-config.outputs.snowflake_warehouse }}
-          SNOWFLAKE_ROLE:     ${{ needs.load-config.outputs.snowflake_role }}
-          SNOWFLAKE_USER:     ${{ secrets.SNOWFLAKE_USER }}
-          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+          SNOWFLAKE_ROLE:      ${{ needs.load-config.outputs.snowflake_role }}
+          SNOWFLAKE_USER:      ${{ vars.SNOWFLAKE_USER }}
+          SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
         run: |
           pip install snowflake-connector-python --quiet
           python3 << 'EOF'
           import snowflake.connector, os
+          from cryptography.hazmat.backends import default_backend
+          from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+          # Load P8 key for Python connector
+          pem_data = os.environ["SNOWFLAKE_PRIVATE_KEY"].encode()
+          passphrase = os.environ.get("SNOWFLAKE_PRIVATE_KEY_PASSPHRASE", "").encode() or None
+          private_key = load_pem_private_key(pem_data, password=passphrase, backend=default_backend())
 
           conn = snowflake.connector.connect(
-              account   = os.environ["SNOWFLAKE_ACCOUNT"],
-              user      = os.environ["SNOWFLAKE_USER"],
-              password  = os.environ["SNOWFLAKE_PASSWORD"],
-              database  = os.environ["SNOWFLAKE_DB"],
-              schema    = os.environ["SNOWFLAKE_SCHEMA"],
-              warehouse = os.environ["SNOWFLAKE_WAREHOUSE"],
-              role      = os.environ["SNOWFLAKE_ROLE"]
+              account    = os.environ["SNOWFLAKE_ACCOUNT"],
+              user       = os.environ["SNOWFLAKE_USER"],
+              private_key= private_key,
+              database   = os.environ["SNOWFLAKE_DB"],
+              schema     = os.environ["SNOWFLAKE_SCHEMA"],
+              warehouse  = os.environ["SNOWFLAKE_WAREHOUSE"],
+              role       = os.environ["SNOWFLAKE_ROLE"]
           )
           cur = conn.cursor()
 
-          # Changesets executed in this run (last 10 minutes)
           cur.execute("""
               SELECT ID, AUTHOR, FILENAME, DATEEXECUTED, EXECTYPE
               FROM DATABASECHANGELOG
@@ -166,20 +181,18 @@ jobs:
               for r in rows:
                   print(f"  [{r[4]}] {r[0]} by {r[1]}  ({r[2]})  at {r[3]}")
           else:
-              print("=== No new changesets executed (already up to date) ===")
+              print("=== No new changesets (already up to date) ===")
 
-          # Table row counts
           cur.execute("""
               SELECT TABLE_NAME, ROW_COUNT
               FROM INFORMATION_SCHEMA.TABLES
               WHERE TABLE_SCHEMA = CURRENT_SCHEMA()
                 AND TABLE_TYPE   = 'BASE TABLE'
-                AND TABLE_NAME  NOT IN ('DATABASECHANGELOG', 'DATABASECHANGELOGLOCK')
+                AND TABLE_NAME  NOT IN ('DATABASECHANGELOG','DATABASECHANGELOGLOCK')
               ORDER BY TABLE_NAME
           """)
-          rows = cur.fetchall()
           print("\n=== Table row counts ===")
-          for r in rows:
+          for r in cur.fetchall():
               print(f"  {r[0]}: {r[1]:,} rows")
 
           cur.close()
