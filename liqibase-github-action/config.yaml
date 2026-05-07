@@ -1,0 +1,51 @@
+# =============================================================================
+# Liquibase Snowflake Migration Config
+# =============================================================================
+# Non-sensitive config only. Secrets (user/password) live in GitHub Secrets.
+# To add a new environment:
+#   1. Add a block here under environments:
+#   2. Add it to the options list in .github/workflows/deploy.yml
+#   3. Create a GitHub Environment with SNOWFLAKE_USER + SNOWFLAKE_PASSWORD secrets
+# =============================================================================
+
+environments:
+
+  dev:
+    snowflake_account: xy12345.us-east-1
+    snowflake_db: DEV_DATABASE
+    snowflake_schema: PUBLIC
+    snowflake_warehouse: DEV_WH
+    snowflake_role: DEV_ROLE
+    liquibase_contexts: dev
+
+  staging:
+    snowflake_account: xy12345.us-east-1
+    snowflake_db: STAGING_DATABASE
+    snowflake_schema: PUBLIC
+    snowflake_warehouse: STAGING_WH
+    snowflake_role: STAGING_ROLE
+    liquibase_contexts: staging
+
+  performance:
+    snowflake_account: xy12345.us-east-1
+    snowflake_db: PERF_DATABASE
+    snowflake_schema: PUBLIC
+    snowflake_warehouse: PERF_WH
+    snowflake_role: PERF_ROLE
+    liquibase_contexts: performance
+
+  preprod:
+    snowflake_account: xy12345.us-east-1
+    snowflake_db: PREPROD_DATABASE
+    snowflake_schema: PUBLIC
+    snowflake_warehouse: PREPROD_WH
+    snowflake_role: PREPROD_ROLE
+    liquibase_contexts: preprod
+
+  prod:
+    snowflake_account: xy12345.us-east-1
+    snowflake_db: PROD_DATABASE
+    snowflake_schema: PUBLIC
+    snowflake_warehouse: PROD_WH
+    snowflake_role: PROD_ROLE
+    liquibase_contexts: prod

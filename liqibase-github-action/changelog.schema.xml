@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                   http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+        Schema catalog — scans 1_SCHEMA/ for all SQL changesets.
+        Only this file should reference 1_SCHEMA/.
+        master.xml includes this file, not the folder directly.
+    -->
+    <includeAll path="1_SCHEMA/"
+                relativeToChangelogFile="true"
+                errorIfMissingOrEmpty="false"/>
+
+</databaseChangeLog>

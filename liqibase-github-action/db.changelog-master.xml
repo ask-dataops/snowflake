@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                   http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+        Master changelog — only references catalog files.
+        Never use includeAll here to avoid double-loading changesets.
+        Add new catalogs below as your schema grows.
+    -->
+    <include file="../liquibase/sql/changelog.schema.xml" relativeToChangelogFile="true"/>
+
+    <!-- Future catalogs:
+    <include file="../liquibase/sql/changelog.data.xml"   relativeToChangelogFile="true"/>
+    <include file="../liquibase/sql/changelog.views.xml"  relativeToChangelogFile="true"/>
+    -->
+
+</databaseChangeLog>

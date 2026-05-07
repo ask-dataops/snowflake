@@ -1,0 +1,15 @@
+-- liquibase formatted sql
+
+-- changeset dev:002 dbms:snowflake contextFilter:dev,staging,performance,preprod,prod
+-- comment: Create ORDERS table
+CREATE TABLE IF NOT EXISTS ORDERS (
+    ORDER_ID    NUMBER AUTOINCREMENT PRIMARY KEY,
+    USER_ID     NUMBER        NOT NULL,
+    STATUS      VARCHAR(50)   DEFAULT 'PENDING',
+    TOTAL       NUMBER(18, 2) DEFAULT 0,
+    CREATED_AT  TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    UPDATED_AT  TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    FOREIGN KEY (USER_ID) REFERENCES USERS(USER_ID)
+);
+
+-- rollback DROP TABLE IF EXISTS ORDERS;
