@@ -1,14 +1,14 @@
 # Snowflake + dbt + Harness NG CD Setup
 
 ## Purpose
-This document describes how to deploy and promote a dbt project to Snowflake using Harness NG CD only. It assumes you will use a Harness Delegate to run the commands that talk to Snowflake.
+This document describes how to deploy and promote a dbt project to Snowflake using Harness NG CD only. It uses a Harness Delegate and a Custom stage for script execution.
 
 ## Architecture
 - Git repository stores the dbt project.
 - Harness NG CD orchestrates the pipeline.
 - Harness Delegate executes the pipeline steps in your environment.
 - Snowflake hosts the warehouse, databases, schemas, roles, and service account.
-- dbt connects to Snowflake from inside a pipeline step using key-pair auth or another approved Snowflake auth method.
+- dbt connects to Snowflake from inside a Harness Custom stage.
 
 ## Prerequisites
 - A Snowflake account.
@@ -57,7 +57,7 @@ GRANT USAGE ON SCHEMA dbt_prod.results TO ROLE dbt_prod;
 ```
 
 ### 5. Keep dev and prod separate
-Use one Snowflake target for dev and another for prod. Snowflake’s CI/CD guidance recommends separate environments for development and production [web:4].
+Use one Snowflake target for dev and another for prod. Snowflake CI/CD guidance recommends separate environments for development and production [web:4].
 
 ## dbt Project Setup
 
@@ -111,18 +111,18 @@ Snowflake’s docs describe a CI/CD flow where pull requests validate in dev and
 ## Harness Delegate Setup
 
 ### 1. Install the Delegate
-Install the Harness Delegate in the environment where the pipeline will run. Harness uses the Delegate to execute deployment work in your environment [web:38][web:44].
+Install the Harness Delegate in the environment where the pipeline will run. Harness uses the Delegate to execute work in your environment [web:38][web:44].
 
 ### 2. Verify the Delegate
 Confirm the Delegate pod or process is running and healthy, and confirm it appears in Harness as available.
 
 ### 3. Add a delegate selector
-Assign a selector such as `firstk8sdel` and reference that selector in your pipeline infrastructure or steps.
+Assign a selector such as `firstk8sdel` and reference that selector in your pipeline infrastructure or stage config.
 
 ## Harness NG CD Pipeline
 
 ### Pipeline model
-Use a Deploy stage or a Custom stage in Harness NG CD. The stage should run a container image that has dbt and Snowflake tooling installed, and the stage should be tied to the Delegate.
+Use a **Deploy stage** for the overall release flow and a **Custom stage** for dbt command execution. The Custom stage is the right choice when you need script-style execution in Harness CD [web:47][web:90].
 
 ### Example pipeline
 ```yaml
@@ -132,52 +132,41 @@ pipeline:
   orgIdentifier: your_org
   stages:
     - stage:
-        name: deploy-dbt
-        type: Deploy
+        name: run-dbt
+        type: Custom
         spec:
-          infrastructure:
-            type: Kubernetes
-            spec:
-              connectorRef: k8s_cluster_connector
-              namespace: harness-ng
-              delegateSelectors:
-                - firstk8sdel
           execution:
             steps:
               - step:
-                  name: checkout-code
-                  type: Run
-                  spec:
-                    image: alpine/git:latest
-                    shell: Bash
-                    command: |-
-                      cd /workspace
-                      git clone https://YOUR_GIT_HOST/YOUR_REPO.git repo
-                      cd repo
-
-              - step:
                   name: dbt-deps
-                  type: Run
+                  type: ShellScript
                   spec:
-                    image: ghcr.io/your-org/dbt-snowflake:latest
                     shell: Bash
-                    command: |-
-                      cd /workspace/repo
-                      dbt deps
+                    delegateSelectors:
+                      - firstk8sdel
+                    source:
+                      type: Inline
+                      spec:
+                        script: |-
+                          cd /workspace/repo
+                          dbt deps
 
               - step:
                   name: dbt-build-prod
-                  type: Run
+                  type: ShellScript
                   spec:
-                    image: ghcr.io/your-org/dbt-snowflake:latest
                     shell: Bash
-                    command: |-
-                      cd /workspace/repo
-                      dbt build --target prod
+                    delegateSelectors:
+                      - firstk8sdel
+                    source:
+                      type: Inline
+                      spec:
+                        script: |-
+                          cd /workspace/repo
+                          dbt build --target prod
 ```
 
 ### Step behavior
-- `checkout-code` pulls the dbt repo.
 - `dbt-deps` installs dbt packages.
 - `dbt-build-prod` runs the production build against Snowflake.
 - The Delegate executes the steps in the selected environment.
