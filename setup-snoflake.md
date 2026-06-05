@@ -1,5 +1,5 @@
 # Snowflake + dbt + Harness CD Setup
-
+https://developer.harness.io/docs/feature-management-experimentation/warehouse-native/integrations/snowflake/
 ## Overview
 This document describes a practical setup for using Harness CD with a Delegate to run dbt against Snowflake.
 
