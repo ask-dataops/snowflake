@@ -1,0 +1,26 @@
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Choose environment'
+        type: choice
+        options:
+          - Production
+          - Staging
+          - Development
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Map display name to internal id
+        id: map
+        run: |
+          case "${{ github.event.inputs.environment }}" in
+            "Production")  echo "env_id=prod" >> "$GITHUB_OUTPUT" ;;
+            "Staging")     echo "env_id=stage" >> "$GITHUB_OUTPUT" ;;
+            "Development") echo "env_id=dev" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Use the mapped id
+        run: echo "Deploying to ${{ steps.map.outputs.env_id }}"
